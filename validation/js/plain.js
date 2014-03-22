@@ -1,76 +1,71 @@
-var addressValidation = function(address, currencyCode) {
+/*
+  * I took it from here: http://pastebin.com/B5r3P5Ny, which is kindly
+  * provided by Joric here: https://bitcointalk.org/index.php?topic=9838.msg762512#msg762512
+  * Checksum version hash checking removed to make it be able to validate not only bitcoin
+  * but any other currency address.
+ */
 
-    this.check = function(address, currencyCode) {
-        var decoded = this.base58_decode(address);
-        if (decoded.length != 25) return false;
-
-        var cksum = decoded.substr(decoded.length - 4);
-        var rest = decoded.substr(0, decoded.length - 4);
-
-        var good_cksum = this.hex2a(sha256_digest(this.hex2a(sha256_digest(rest)))).substr(0, 4);
-
-        if (cksum != good_cksum) return false;
-        return true;
-    };
-
-    this.base58_decode = function(string) {
-        var table = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-        var table_rev = [];
-
-        var i;
-        for (i = 0; i < 58; i++) {
-            table_rev[table[i]] = int2bigInt(i, 8, 0);
-        }
-
-        var l = string.length;
-        var long_value = int2bigInt(0, 1, 0);
-
-        var num_58 = int2bigInt(58, 8, 0);
-
-        var c;
-        for(i = 0; i < l; i++) {
-            c = string[l - i - 1];
-            long_value = this.add(long_value, mult(table_rev[c], this.pow(num_58, i)));
-        }
-
-        var hex = bigInt2str(long_value, 16);
-
-        var str = this.hex2a(hex);
-
-        var nPad;
-        for (nPad = 0; string[nPad] == table[0]; nPad++);
-
-        var output = str;
-        if (nPad > 0) output = this.repeat("\0", nPad) + str;
-
-        return output;
-    };
-
-    this.hex2a = function(hex) {
-        var str = '';
-        for (var i = 0; i < hex.length; i += 2)
-            str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-        return str;
-    };
-
-    this.pow = function(big, exp) {
-        if (exp == 0) return int2bigInt(1, 1, 0);
-        var i;
-        var newbig = big;
-        for (i = 1; i < exp; i++) {
-            newbig = mult(newbig, big);
-        }
-
-        return newbig;
-    };
-
-    this.repeat = function(s, n){
-        var a = [];
-        while(a.length < n){
-            a.push(s);
-        }
-        return a.join('');
-    }
-
-    return this.check(address, currencyCode);
+BigInteger.valueOf = nbv;
+BigInteger.prototype.toByteArrayUnsigned = function () {
+    var ba = this.toByteArray();
+    if (ba.length) {
+        if (ba[0] == 0)
+            ba = ba.slice(1);
+        return ba.map(function (v) {
+            return (v < 0) ? v + 256 : v;
+        });
+    } else
+        return ba;
 };
+var Bitcoin = {};
+(function () {
+    var B58 = Bitcoin.Base58 = {
+        alphabet: "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz",
+        base: BigInteger.valueOf(58),
+        decode: function (input) {
+            bi = BigInteger.valueOf(0);
+            var leadingZerosNum = 0;
+            for (var i = input.length - 1; i >= 0; i--) {
+                var alphaIndex = B58.alphabet.indexOf(input[i]);
+                if (alphaIndex < 0) {
+                    throw "Invalid character";
+                }
+                bi = bi.add(BigInteger.valueOf(alphaIndex)
+                    .multiply(B58.base.pow(input.length - 1 - i)));
+                if (input[i] == "1") leadingZerosNum++;
+                else leadingZerosNum = 0;
+            }
+            var bytes = bi.toByteArrayUnsigned();
+            while (leadingZerosNum-- > 0) bytes.unshift(0);
+            return bytes;
+        }
+    };
+})();
+Bitcoin.Address = function (bytes) {
+    if ("string" == typeof bytes)
+        bytes = Bitcoin.Address.decodeString(bytes);
+    this.hash = bytes;
+    this.version = Bitcoin.Address.networkVersion;
+};
+Bitcoin.Address.networkVersion = 0x00; // mainnet
+Bitcoin.Address.decodeString = function (string) {
+    var bytes = Bitcoin.Base58.decode(string);
+    var hash = bytes.slice(0, 21);
+    var checksum = Crypto.SHA256(Crypto.SHA256(hash, { asBytes: true }), { asBytes: true });
+    if (checksum[0] != bytes[21] ||
+        checksum[1] != bytes[22] ||
+        checksum[2] != bytes[23] ||
+        checksum[3] != bytes[24])
+        throw "Checksum validation failed!";
+
+    return hash;
+};
+
+function check_address(address) {
+    try {
+        Bitcoin.Address(address);
+        return true;
+    } catch (err) {
+        return false;
+    }
+}
